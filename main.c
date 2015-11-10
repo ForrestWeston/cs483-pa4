@@ -5,7 +5,7 @@
 #define CONST_B 3
 #define PRIME_P 1223
 #define SEED	18
-#define NUM_ITT 100
+#define NUM_ITT 10000000 //ten million
 
 int mpiErr;
 
@@ -47,23 +47,24 @@ int comp(const void *elem1, const void *elem2)
 	return 0;
 }
 
+// sorts array inplace
 void localSort(uint64_t *array, uint64_t size)
 {
 	qsort(array, size, sizeof(array), comp);
 }
 
-uint64_t* choosePivots(uint64_t *array, uint64_t size, uint64_t numPivots)
+//chooses numPivots evenvly spaced pivots from array to out array
+void choosePivots(uint64_t *array, uint64_t size, uint64_t numPivots, uint64_t *out)
 {
 	uint64_t i;
-	uint64_t *ret = malloc(sizeof(uint64_t) * numPivots);
 	uint64_t loc = size/numPivots;
 	for(i=0;i<numPivots;i++) {
-		ret[i] = array[(i+1)*loc];
+		out[i] = array[(i+1)*loc];
 	}
-	return ret;
 }
 
-uint64_t* globalChoosePivots(struct sort_context *s_ctx)
+//sorts s_ctx->localpivot arrays (locally) chooses pivots into s_ctx->globalPivots
+void globalChoosePivots(struct sort_context *s_ctx)
 {
 	uint64_t *rbuf;
 	uint64_t size = s_ctx->numNodes*(s_ctx->numNodes - 1);
@@ -75,14 +76,14 @@ uint64_t* globalChoosePivots(struct sort_context *s_ctx)
 				  rbuf, (s_ctx->numNodes-1), MPI_UINT64_T, comm);
 
 	localSort(rbuf,size);
-	return choosePivots(rbuf, size, s_ctx->myArraySize);
+	choosePivots(rbuf, size, s_ctx->myArraySize, s_ctx->globalSplitters);
 
 }
 int main(int argc, char *argv[])
 {
 	struct sort_context *s_ctx = malloc(sizeof(struct sort_context));
-	s_ctx->localSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1); //redundant?
-	s_ctx->globalSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1); //redundant?
+	s_ctx->localSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
+	s_ctx->globalSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
 	init_mpi(argc, argv, s_ctx);
 
 	int n = (int)log2(s_ctx->numNodes);
@@ -109,12 +110,12 @@ int main(int argc, char *argv[])
 	localSort(s_ctx->myArray, s_ctx->myArraySize);
 
 	//pick p-1 evenly spaced pivots from local sorted array
-	s_ctx->localSplitters = choosePivots(s_ctx->myArray, s_ctx->myArraySize,
-										 s_ctx->myArraySize-1);
+	choosePivots(s_ctx->myArray, s_ctx->myArraySize,
+					s_ctx->myArraySize-1, s_ctx->localSplitters);
 
 	//Sort the p(p-1) pivots and choose p-1 evenly spaced
 	//pivots for global pivots
-	s_ctx->globalSplitters = globalChoosePivots(s_ctx);
+	globalChoosePivots(s_ctx);
 }
 
 
