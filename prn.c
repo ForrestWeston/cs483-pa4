@@ -1,6 +1,7 @@
 #include "matrix.h"
 #include "pnr.h"
 
+// CONTEXT->size is the local size size*numProcs == total size
 uint64_t* ParallelGen(struct context* ctx)
 {
 	uint64_t count = 1;
@@ -68,12 +69,15 @@ uint64_t* ParallelGen(struct context* ctx)
 		output[count] = vres->v[0] % ctx->P;
 	}
 
+	return output;
+/*
 	if (ctx->rank == 0) {
 		result = malloc(sizeof(uint64_t) * ctx->itt);
 	}
 
-	//MPI_Gather(output, ctx->size, MPI_INT, result, ctx->size,
-	//MPI_INT, 0,MPI_COMM_WORLD);
+	MPI_Gather(output, ctx->size, MPI_INT, result, ctx->size,
+	MPI_INT, 0,MPI_COMM_WORLD);
 
 	return result;
+*/
 }
