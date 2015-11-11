@@ -12,8 +12,8 @@ int mpiErr;
 struct sort_context{
 	int numNodes;
 	int id;
-	uint64_t* localSplitters;
-	uint64_t* globalSplitters;
+	uint64_t* localPivots;
+	uint64_t* globalPivots;
 	uint64_t* myArray;
 	uint64_t myArraySize;
 };
@@ -72,18 +72,78 @@ void globalChoosePivots(struct sort_context *s_ctx)
 	MPI_Comm_size(comm, s_ctx->numNodes);
 
 	rbuf = malloc(sizeof(uint64_t) * size);
-	MPI_Allgather(s_ctx->localSplitters, (s_ctx->numNodes-1), MPI_UINT64_T,
-				  rbuf, (s_ctx->numNodes-1), MPI_UINT64_T, comm);
+	MPI_Allgather(s_ctx->localPivots, (s_ctx->numNodes-1), MPI_UINT64_T,
+			rbuf, (s_ctx->numNodes-1), MPI_UINT64_T, comm);
 
 	localSort(rbuf,size);
-	choosePivots(rbuf, size, s_ctx->myArraySize, s_ctx->globalSplitters);
+	choosePivots(rbuf, size, s_ctx->myArraySize, s_ctx->globalPivots);
 
 }
-int main(int argc, char *argv[])
+
+void distributePartitions(struct sort_context *s_ctx)
+{
+	/* MPI_Alltoallv()
+	 * sendBuf == s_ctx->myArray;
+	 * sendcount[numNodes] [count to rank 0], [count to rank 1] ...
+	 * senddispl[numNode] [0 to first pivt], [1st pivt to 2nd] ...
+	 * sendtype == MPI_UINT64_T
+	 *
+	 * recvBuf == s_ctx->myArray
+	 * recvcount[numNodes] [max possible count from rank 0] ....
+	 * recvdispl[numNodes] [0 to recvcount[0]] [recvcount[0] to recvcount[1]]...
+	 * recvtype == MPI_UINT64_T
+	 */
+
+	//calculate count and displacement for alltoallv
+	uint64_t *sendcount = malloc(sizeof(uint64_t)*s_ctx->numNodes);
+	uint64_t *senddispl = malloc(sizeof(uint64_t)*s_ctx->numNodes);
+	uint64_t *recvcount = malloc(sizeof(uint64_t)*s_ctx->numNodes);
+	uint64_t *recvdispl = malloc(sizeof(uint64_t)*s_ctx->numNodes);
+
+	int count = 0, disp = 0, itt = 0, pivcount = 0;
+
+	for (; itt < s_ctx->myArraySize; itt++) {
+		if (s_ctx->myArray[itt] == s_ctx->globalPivots[pivcount]) {
+			count++;
+			sendcount[pivcount] = count;
+			senddispl[pivcount] = disp;
+			pivcount++;
+			disp = count;
+			count = 0;
+			continue;
+
+		}
+		if (s_ctx->myArray[itt] > s_ctx->globalPivots[pivcount]) {
+			sendcount[pivcount] = count = 0;
+			senddispl[pivcount] = 0;
+			pivcount++;
+			continue;
+		}
+		count++;
+	}
+	//brodcast the count to all proccesses
+	MPI_Alltoall(sendcount, s_ctx->numNodes, MPI_UINT64_T,
+				 recvcount, s_ctx->numNodes, MPI_UINT64_T, MPI_COMM_WORLD);
+
+	//derive recvdispl from recvcount
+	recvdispl[0] = 0;
+	for (itt=1; itt < s_ctx->numNodes; itt++) {
+		recvdispl[itt] = recvcount[itt-1] + recvdispl[itt-1]; //this is neat
+	}
+
+	//redistribute arrays with alltoallv
+	MPI_Alltoallv(MPI_IN_PLACE, sendcount, senddispl, MPI_UINT64_T,
+				  s_ctx->myArray, recvcount, recvdispl, MPI_UINT64_T,
+				  MPI_COMM_WORLD);
+
+}
+
+
+uint64_t* main(int argc, char *argv[])
 {
 	struct sort_context *s_ctx = malloc(sizeof(struct sort_context));
-	s_ctx->localSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
-	s_ctx->globalSplitters = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
+	s_ctx->localPivots = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
+	s_ctx->globalPivots = malloc(sizeof(uint64_t)*s_ctx->numNodes-1);
 	init_mpi(argc, argv, s_ctx);
 
 	int n = (int)log2(s_ctx->numNodes);
@@ -111,11 +171,26 @@ int main(int argc, char *argv[])
 
 	//pick p-1 evenly spaced pivots from local sorted array
 	choosePivots(s_ctx->myArray, s_ctx->myArraySize,
-					s_ctx->myArraySize-1, s_ctx->localSplitters);
+					s_ctx->myArraySize-1, s_ctx->localPivots);
 
 	//Sort the p(p-1) pivots and choose p-1 evenly spaced
 	//pivots for global pivots
 	globalChoosePivots(s_ctx);
+
+	//use global pivots to divide up the data among all procs
+	distributePartitions(s_ctx);
+
+	//after recieveing the correct elements, sort them locally
+	localSort(s_ctx->myArray, s_ctx->myArraySize);
+
+	//every processor now has a sorted list s.t. rank0[arraysize] < rank1[arraysize].....
+	//now all we need to do is combine them in order from lowest rank to highest
+
+	if (s_ctx->id == 0) {
+		uint64_t *result = malloc(sizeof(uint64_t)
+							* s_ctx->myArraySize * s_ctx->numNodes);
+	}
+
 }
 
 
