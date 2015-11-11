@@ -185,10 +185,20 @@ uint64_t* main(int argc, char *argv[])
 
 	//every processor now has a sorted list s.t. rank0[arraysize] < rank1[arraysize].....
 	//now all we need to do is combine them in order from lowest rank to highest
-
+	uint64_t *result;
 	if (s_ctx->id == 0) {
-		uint64_t *result = malloc(sizeof(uint64_t)
+		result = malloc(sizeof(uint64_t)
 							* s_ctx->myArraySize * s_ctx->numNodes);
+	}
+
+	MPI_Gather(s_ctx->myArray, s_ctx->myArraySize, MPI_UINT64_T,
+			   result, s_ctx->myArraySize, MPI_UINT64_T, 0, MPI_COMM_WORLD);
+	if (s_ctx->id == 0) {
+		int i;
+		printf("SORTED RESULT:\n");
+		for (i=0;i<s_ctx->myArraySize*s_ctx->numNodes;i++) {
+			printf("%" PRIU64 ", ", result[i]);
+		}
 	}
 
 }
